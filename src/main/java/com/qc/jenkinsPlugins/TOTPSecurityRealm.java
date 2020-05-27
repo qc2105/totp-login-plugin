@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-package com.qc.mavenproject4;
+package com.qc.jenkinsPlugins;
 
 import com.thoughtworks.xstream.converters.UnmarshallingContext;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -791,12 +791,12 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         }
 
         public String getDisplayName() {
-            return "TOTPSecurityRealm";
+            return "Manage Users";
         }
 
         @Override
         public String getDescription() {
-            return "TOTPSecurityRealm";
+            return "Create/delete/modify users that can log in to this jenkins";
         }
 
 //        @NonNull
