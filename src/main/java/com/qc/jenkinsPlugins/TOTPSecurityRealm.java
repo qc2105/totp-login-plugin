@@ -23,6 +23,7 @@
  */
 package com.qc.jenkinsPlugins;
 
+import com.eatthepath.otp.TimeBasedOneTimePasswordGenerator;
 import com.thoughtworks.xstream.converters.UnmarshallingContext;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Extension;
@@ -91,15 +92,18 @@ import javax.servlet.http.HttpSession;
 import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
+import java.security.Key;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.annotation.Nonnull;
+import javax.crypto.KeyGenerator;
 
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
+
 
 /**
  * {@link SecurityRealm} that performs authentication by looking up {@link User}.
@@ -510,13 +514,28 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         }
         return false;
     }
-
+    
     /**
      * Creates a new user account by registering a password to the user.
      */
     public User createAccount(String userName, String password) throws IOException {
         User user = User.getById(userName, true);
         user.addProperty(Details.fromPlainPassword(password));
+        try {
+            final TimeBasedOneTimePasswordGenerator totp = new TimeBasedOneTimePasswordGenerator();
+            final KeyGenerator keyGenerator = KeyGenerator.getInstance(totp.getAlgorithm());
+
+            // SHA-1 and SHA-256 prefer 64-byte (512-bit) keys; SHA512 prefers 128-byte (1024-bit) keys
+            keyGenerator.init(512);
+
+            Key key = keyGenerator.generateKey();
+            
+            user.addProperty(otpSecret.fromPlainPassword(key.toString()));
+        }
+        catch (java.security.NoSuchAlgorithmException e) {
+            LOGGER.finer("NoSuchAlgorithmException");
+        }
+        
         SecurityListener.fireUserCreated(user.getId());
         return user;
     }
@@ -634,12 +653,155 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
     boolean isInvalid();
     }
     
+    public interface InvalidatableUseroptSecret extends UserDetails {
+    boolean isInvalid();
+    }
+    
+    public static final class otpSecret extends UserProperty implements InvalidatableUseroptSecret {
+        /**
+         * Hashed password.
+         */
+        private /*almost final*/ String passwordHash;
+               
+        /**
+         * @deprecated Scrambled password.
+         * Field kept here to load old (pre 1.283) user records,
+         * but now marked transient so field is no longer saved.
+         */
+        @Deprecated
+        private transient String password;
+
+        private otpSecret(String passwordHash) {
+            this.passwordHash = passwordHash;
+        }
+       
+        static otpSecret fromHashedPassword(String hashed) {
+            return new otpSecret(hashed);
+        }
+
+        static otpSecret fromPlainPassword(String rawPassword) {
+            return new otpSecret(PASSWORD_ENCODER.encodePassword(rawPassword,null));
+        }
+
+        public GrantedAuthority[] getAuthorities() {
+            // TODO
+            return TEST_AUTHORITY;
+        }
+
+        public String getPassword() {
+            return passwordHash;
+        }
+
+        public boolean isPasswordCorrect(String candidate) {
+            return PASSWORD_ENCODER.isPasswordValid(getPassword(),candidate,null);
+        }
+
+        public String getProtectedPassword() {
+            // put session Id in it to prevent a replay attack.
+            return Protector.protect(Stapler.getCurrentRequest().getSession().getId()+':'+getPassword());
+        }
+
+        public String getUsername() {
+            return user.getId();
+        }
+
+        /*package*/ User getUser() {
+            return user;
+        }
+
+        public boolean isAccountNonExpired() {
+            return true;
+        }
+
+        public boolean isAccountNonLocked() {
+            return true;
+        }
+
+        public boolean isCredentialsNonExpired() {
+            return true;
+        }
+
+        public boolean isEnabled() {
+            return true;
+        }
+
+        public boolean isInvalid() {
+            return user==null;
+        }
+
+        public static class ConverterImpl extends XStream2.PassthruConverter<otpSecret> {
+            public ConverterImpl(XStream2 xstream) { super(xstream); }
+            @Override protected void callback(otpSecret d, UnmarshallingContext context) {
+                // Convert to hashed password and report to monitor if we load old data
+                if (d.password!=null && d.passwordHash==null) {
+                    d.passwordHash = PASSWORD_ENCODER.encodePassword(Scrambler.descramble(d.password),null);
+                    OldDataMonitor.report(context, "1.283");
+                }
+            }
+        }
+
+        @Extension @Symbol("password")
+        public static final class DescriptorImpl extends UserPropertyDescriptor {
+            @Override
+            public String getDisplayName() {
+                return "password";
+            }
+
+            @Override
+            public otpSecret newInstance(StaplerRequest req, JSONObject formData) throws FormException {
+                if (req == null) {
+                    // Should never happen, see newInstance() Javadoc
+                    throw new FormException("Stapler request is missing in the call", "staplerRequest");
+                }
+                String pwd = Util.fixEmpty(req.getParameter("user.password"));
+                String pwd2= Util.fixEmpty(req.getParameter("user.password2"));
+
+                if(!Util.fixNull(pwd).equals(Util.fixNull(pwd2)))
+                    throw new FormException("Please confirm the password by typing it twice","user.password2");
+
+                String data = Protector.unprotect(pwd);
+                if(data!=null) {
+                    String prefix = Stapler.getCurrentRequest().getSession().getId() + ':';
+                    if(data.startsWith(prefix))
+                        return otpSecret.fromHashedPassword(data.substring(prefix.length()));
+                }
+
+                User user = getNearestAncestorOfTypeOrThrow(req, User.class);
+                // the UserSeedProperty is not touched by the configure page
+                UserSeedProperty userSeedProperty = user.getProperty(UserSeedProperty.class);
+                if (userSeedProperty != null) {
+                    userSeedProperty.renewSeed();
+                }
+
+                return otpSecret.fromPlainPassword(Util.fixNull(pwd));
+            }
+
+            public static @Nonnull <T> T getNearestAncestorOfTypeOrThrow(@Nonnull StaplerRequest request, @Nonnull Class<T> clazz) {
+                T t = request.findAncestorObject(clazz);
+                if (t == null) {
+                    throw new IllegalArgumentException("No ancestor of type " + clazz.getName() + " in the request");
+                }
+                return t;
+            }
+            
+            @Override
+            public boolean isEnabled() {
+                // this feature is only when TOTPSecurityRealm is enabled
+                return Jenkins.get().getSecurityRealm() instanceof TOTPSecurityRealm;
+            }
+
+            public UserProperty newInstance(User user) {
+                return null;
+            }
+        }
+    }
+    
     public static final class Details extends UserProperty implements InvalidatableUserDetails{
         /**
          * Hashed password.
          */
         private /*almost final*/ String passwordHash;
-
+               
         /**
          * @deprecated Scrambled password.
          * Field kept here to load old (pre 1.283) user records,
@@ -651,7 +813,7 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         private Details(String passwordHash) {
             this.passwordHash = passwordHash;
         }
-
+       
         static Details fromHashedPassword(String hashed) {
             return new Details(hashed);
         }

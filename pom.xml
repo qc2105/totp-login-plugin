@@ -73,6 +73,12 @@
             <version>1.20.0</version>
             <type>jar</type>
         </dependency>
+        
+        <dependency>
+            <groupId>com.eatthepath</groupId>
+            <artifactId>java-otp</artifactId>
+            <version>0.2.0</version>
+        </dependency>
     </dependencies>
     <properties>
     <java.level>8</java.level>
