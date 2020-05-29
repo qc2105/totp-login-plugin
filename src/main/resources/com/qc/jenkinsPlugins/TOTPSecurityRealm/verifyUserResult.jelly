@@ -1,0 +1,13 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:th="http://www.thymeleaf.org" xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:l="/lib/layout">
+  <l:layout>
+    <l:hasPermission permission="${app.READ}" it="${app}">
+      <st:include page="sidepanel.jelly" it="${app}" />
+    </l:hasPermission>
+    <l:main-panel>
+      <h1>${it.verifySuccessfull}</h1>
+      currentPassword is ${it.currentOTPPassword}
+      ${it.verifySuccessfull}  
+    </l:main-panel>
+  </l:layout>
+</j:jelly>

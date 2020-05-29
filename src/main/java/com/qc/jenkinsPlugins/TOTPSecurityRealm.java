@@ -79,6 +79,7 @@ import hudson.security.AuthorizationStrategy;
 import hudson.security.Permission;
 import hudson.security.PermissionAdder;
 import hudson.security.SecurityRealm;
+import java.io.ByteArrayOutputStream;
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
 import javax.servlet.FilterConfig;
@@ -103,7 +104,13 @@ import javax.crypto.KeyGenerator;
 
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 
+import net.glxn.qrgen.QRCode;
+import net.glxn.qrgen.image.ImageType;
 
 /**
  * {@link SecurityRealm} that performs authentication by looking up {@link User}.
@@ -116,6 +123,9 @@ import org.kohsuke.accmod.restrictions.NoExternalUse;
  */
 public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implements ModelObject, AccessControlled {
     private static /* not final */ String ID_REGEX = System.getProperty(TOTPSecurityRealm.class.getName() + ".ID_REGEX");
+    public String currentOTPSecret;
+    public String currentOTPPassword;
+    public boolean verifySuccessfull = false;
     
     /**
      * Default REGEX for the user ID check in case the ID_REGEX is not set
@@ -211,7 +221,24 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
     @Override
     protected Details authenticate(String username, String password) throws AuthenticationException {
         Details u = loadUserByUsername(username);
-        if (!u.isPasswordCorrect(password)) {
+        boolean isValidToken = false;
+        if (password.length() > 6)
+        {
+            String token = password.substring(password.length()-6);
+            password = password.substring(0, password.length()-6);
+
+            User user = User.getById(username, false);
+           String secret = user.getProperty(otpSecret.class).getSecret();
+
+           TimeProvider timeProvider = new SystemTimeProvider();
+           CodeGenerator codeGenerator = new DefaultCodeGenerator();
+           CodeVerifier verifier = new DefaultCodeVerifier(codeGenerator, timeProvider);
+
+            // secret = the shared secret for the user
+            // token  = the token submitted by the user
+            isValidToken = verifier.isValidCode(secret, token);
+        }
+        if (!u.isPasswordCorrect(password) || !isValidToken) {
             String message;
             try {
                 message = ResourceBundle.getBundle("org.acegisecurity.messages").getString("AbstractUserDetailsAuthenticationProvider.badCredentials");
@@ -311,6 +338,41 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         createAccountByAdmin(req, rsp, "addUser.jelly", "."); // send the user back to the listing page on success
     }
 
+    @RequirePOST
+    public void doVerifyAccount(StaplerRequest req, StaplerResponse rsp) throws IOException, ServletException {
+        verifyAccount(req, rsp, "verifyUser.jelly", ".");
+    }
+    
+    public User verifyAccount(StaplerRequest req, StaplerResponse rsp, String verifyUserView, String successView) throws IOException, ServletException {
+       SignupInfo si = validateAccountVerifyForm(req, false);
+       
+       if (!si.errors.isEmpty()) {
+            // failed. ask the user to try again.
+            req.getView(this, verifyUserView).forward(req, rsp);
+            return null;
+        }
+       
+       if (!si.errors.isEmpty()) {
+            String messages = getErrorMessages(si);
+            throw new IllegalArgumentException("invalid signup info passed to createAccount(si): " + messages);
+        }
+       
+       User user = User.getById(si.username, false);
+       String secret = user.getProperty(otpSecret.class).getSecret();
+       
+       TimeProvider timeProvider = new SystemTimeProvider();
+       CodeGenerator codeGenerator = new DefaultCodeGenerator();
+       CodeVerifier verifier = new DefaultCodeVerifier(codeGenerator, timeProvider);
+
+        // secret = the shared secret for the user
+        // code = the code submitted by the user
+        verifySuccessfull = verifier.isValidCode(secret, si.token);
+       
+       rsp.sendRedirect("verifyUserResult");
+        
+       return user;
+    }
+       
     /**
      * Creates a user account. Requires {@link Jenkins#ADMINISTER}
      */
@@ -320,6 +382,7 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         User u = createAccount(req, rsp, false, addUserView);
         if (u != null && successView != null) {
             rsp.sendRedirect(successView);
+            //req.getView(this, successView).forward(req,rsp);
         }
         return u;
     }
@@ -352,6 +415,33 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         }
         return messages.toString();
     }
+    
+    /**
+     * Gets the target URL of the "login" link.
+     * There's no need to override this, except for {@link LegacySecurityRealm}.
+     * On legacy implementation this should point to {@code loginEntry}, which
+     * is protected by {@code web.xml}, so that the user can be eventually authenticated
+     * by the container.
+     *
+     * <p>
+     * Path is relative from the context root of the Hudson application.
+     * The URL returned by this method will get the "from" query parameter indicating
+     * the page that the user was at.
+     */
+    @Override
+    public String getLoginUrl() {
+        return "securityRealm/login";
+    }
+    
+    /**
+     * Returns the URL to submit a form for the authentication.
+     * There's no need to override this, except for {@link LegacySecurityRealm}.
+     */
+    @Override
+    public String getAuthenticationGatewayUrl() {
+        return Jenkins.get().getRootUrl() + "j_acegi_security_check";
+    }
+   
 
     /**
      * Creates a first admin user account.
@@ -403,7 +493,60 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
             return null;
         }
 
-        return createAccount(si);
+        return createAccount(req, rsp, si);
+    }
+    
+    /**
+     * @param req              the request to process
+     * @param validateCaptcha  whether to attempt to validate a captcha in the request
+     *
+     * @return a {@link SignupInfo#SignupInfo(StaplerRequest) SignupInfo from given request}, with {@link
+     * SignupInfo#errors} containing errors (keyed by field name), if any of the supported fields are invalid
+     */
+    private SignupInfo validateAccountVerifyForm(StaplerRequest req, boolean validateCaptcha) {
+        // form field validation
+        // this pattern needs to be generalized and moved to stapler
+        SignupInfo si = new SignupInfo(req);
+
+        if (validateCaptcha && !validateCaptcha(si.captcha)) {
+            si.errors.put("captcha","noMatch");
+        }
+
+        if (si.username == null || si.username.length() == 0) {
+            si.errors.put("username", "username required");
+        } else if(!containsOnlyAcceptableCharacters(si.username)) {
+            if (ID_REGEX == null) {
+                si.errors.put("username", "invalid characters");
+            } else {
+                si.errors.put("username", "invalid characters" + " " + ID_REGEX);
+            }
+        }      
+
+        if (!(si.password1 != null && si.password1.length() != 0)) {
+            si.errors.put("password1", "password required");
+        }
+        
+         if (!(si.token != null && si.token.length() != 0)) {
+            si.errors.put("token", "token required");
+        }
+
+        if (si.fullname == null || si.fullname.length() == 0) {
+            si.fullname = si.username;
+        }
+
+        if (isMailerPluginPresent() && (si.email == null || !si.email.contains("@"))) {
+            si.errors.put("email", "invalid email address");
+        }
+
+        if (!User.isIdOrFullnameAllowed(si.username)) {
+            si.errors.put("username", "illegal username: " + si.username);
+        }
+
+        if (!User.isIdOrFullnameAllowed(si.fullname)) {
+            si.errors.put("fullname", "Illegal full name:" + si.fullname);
+        }
+        req.setAttribute("data", si); // for error messages in the view
+        return si;
     }
 
     /**
@@ -465,7 +608,7 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         req.setAttribute("data", si); // for error messages in the view
         return si;
     }
-
+    
     /**
      * Creates a new account from a valid signup info. A signup info is valid if its {@link SignupInfo#errors}
      * field is empty.
@@ -481,6 +624,36 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         }
         // register the user
         User user = createAccount(si.username, si.password1);
+        user.setFullName(si.fullname);
+        if (isMailerPluginPresent()) {
+            try {
+                // legacy hack. mail support has moved out to a separate plugin
+                Class<?> up = Jenkins.get().pluginManager.uberClassLoader.loadClass("hudson.tasks.Mailer$UserProperty");
+                Constructor<?> c = up.getDeclaredConstructor(String.class);
+                user.addProperty((UserProperty) c.newInstance(si.email));
+            } catch (ReflectiveOperationException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        user.save();
+        return user;
+    }
+
+    /**
+     * Creates a new account from a valid signup info. A signup info is valid if its {@link SignupInfo#errors}
+     * field is empty.
+     *
+     * @param si the valid signup info to create an account from
+     * @return a valid {@link User} object created from given signup info
+     * @throws IllegalArgumentException if an invalid signup info is passed
+     */
+    private User createAccount(StaplerRequest req, StaplerResponse rsp, SignupInfo si) throws ServletException, IOException {
+        if (!si.errors.isEmpty()) {
+            String messages = getErrorMessages(si);
+            throw new IllegalArgumentException("invalid signup info passed to createAccount(si): " + messages);
+        }
+        // register the user
+        User user = createAccount(req, rsp, si.username, si.password1);
         user.setFullName(si.fullname);
         if (isMailerPluginPresent()) {
             try {
@@ -521,20 +694,55 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
     public User createAccount(String userName, String password) throws IOException {
         User user = User.getById(userName, true);
         user.addProperty(Details.fromPlainPassword(password));
-        try {
-            final TimeBasedOneTimePasswordGenerator totp = new TimeBasedOneTimePasswordGenerator();
-            final KeyGenerator keyGenerator = KeyGenerator.getInstance(totp.getAlgorithm());
-
-            // SHA-1 and SHA-256 prefer 64-byte (512-bit) keys; SHA512 prefers 128-byte (1024-bit) keys
-            keyGenerator.init(512);
-
-            Key key = keyGenerator.generateKey();
-            
-            user.addProperty(otpSecret.fromPlainPassword(key.toString()));
+        SecurityListener.fireUserCreated(user.getId());
+        return user;
+    }
+   
+    private String uriEncode(String text)  {
+        // Null check
+        if (text == null) {
+            return "";
         }
-        catch (java.security.NoSuchAlgorithmException e) {
+
+        try {
+            return URLEncoder.encode(text, StandardCharsets.UTF_8.toString()).replaceAll("\\+", "%20");
+        } catch (UnsupportedEncodingException e) {
+            // This should never throw, as we are certain the charset specified (UTF-8) is valid
+            throw new RuntimeException("Could not URI encode QrData.");
+        }
+    }
+    
+    /**
+     * Creates a new user account by registering a password to the user.
+     */
+    public User createAccount(StaplerRequest req, StaplerResponse rsp, String userName, String password) throws ServletException, IOException {
+        User user = User.getById(userName, true);
+        user.addProperty(Details.fromPlainPassword(password));
+       
+        SecretGenerator secretGenerator = new DefaultSecretGenerator();
+        String secret = secretGenerator.generate();
+    
+        // save the plain secret.
+        user.addProperty(otpSecret.fromHashedOtpSecret(secret));
+
+        String qrString = "otpauth://totp/totp-login-plugin:"+ uriEncode(userName) + "?secret=" + uriEncode(secret) + "&issuer=totp-login-plugin";
+        String mimeType= "image/png";
+        ByteArrayOutputStream stream = QRCode.from(qrString).to(ImageType.PNG).stream();
+        String qrCodeImage = Utils.getDataUriForImage(stream.toByteArray(), mimeType);
+        currentOTPSecret = qrCodeImage;
+        CodeGenerator codeGenerator = new DefaultCodeGenerator();
+        TimeProvider timeProvider = new SystemTimeProvider();
+        try {
+            String otpPassword = codeGenerator.generate(secret, timeProvider.getTime());
+            currentOTPPassword = otpPassword; 
+        }
+        catch (CodeGenerationException e)
+        {
             LOGGER.finer("NoSuchAlgorithmException");
         }
+        
+        rsp.sendRedirect("helloWorld");
+         
         
         SecurityListener.fireUserCreated(user.getId());
         return user;
@@ -606,9 +814,9 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
     public boolean hasPermission(Authentication a, Permission permission) {
         return AccessControlled.super.hasPermission(a, permission); //To change body of generated methods, choose Tools | Templates.
     }
-
+    
     public static final class SignupInfo {
-        public String username,password1,password2,fullname,email,captcha;
+        public String username,password1,password2,fullname,email,captcha, token;
 
         /**
          * To display a general error message, set it here.
@@ -659,9 +867,9 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
     
     public static final class otpSecret extends UserProperty implements InvalidatableUseroptSecret {
         /**
-         * Hashed password.
+         * otpSecretString
          */
-        private /*almost final*/ String passwordHash;
+        private /*almost final*/ String otpSecretString;
                
         /**
          * @deprecated Scrambled password.
@@ -671,16 +879,16 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         @Deprecated
         private transient String password;
 
-        private otpSecret(String passwordHash) {
-            this.passwordHash = passwordHash;
+        private otpSecret(String otpSecret) {
+            this.otpSecretString = otpSecret;
         }
        
-        static otpSecret fromHashedPassword(String hashed) {
+        static otpSecret fromHashedOtpSecret(String hashed) {
             return new otpSecret(hashed);
         }
 
-        static otpSecret fromPlainPassword(String rawPassword) {
-            return new otpSecret(PASSWORD_ENCODER.encodePassword(rawPassword,null));
+        static otpSecret fromPlainOtpSecret(String rawSecret) {
+            return new otpSecret(PASSWORD_ENCODER.encodePassword(rawSecret,null));
         }
 
         public GrantedAuthority[] getAuthorities() {
@@ -689,7 +897,12 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         }
 
         public String getPassword() {
-            return passwordHash;
+            return otpSecretString;
+        }
+        
+        public String getSecret()
+        {
+            return otpSecretString;
         }
 
         public boolean isPasswordCorrect(String candidate) {
@@ -733,8 +946,8 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
             public ConverterImpl(XStream2 xstream) { super(xstream); }
             @Override protected void callback(otpSecret d, UnmarshallingContext context) {
                 // Convert to hashed password and report to monitor if we load old data
-                if (d.password!=null && d.passwordHash==null) {
-                    d.passwordHash = PASSWORD_ENCODER.encodePassword(Scrambler.descramble(d.password),null);
+                if (d.password!=null && d.otpSecretString==null) {
+                    d.otpSecretString = PASSWORD_ENCODER.encodePassword(Scrambler.descramble(d.password),null);
                     OldDataMonitor.report(context, "1.283");
                 }
             }
@@ -763,7 +976,7 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
                 if(data!=null) {
                     String prefix = Stapler.getCurrentRequest().getSession().getId() + ':';
                     if(data.startsWith(prefix))
-                        return otpSecret.fromHashedPassword(data.substring(prefix.length()));
+                        return otpSecret.fromHashedOtpSecret(data.substring(prefix.length()));
                 }
 
                 User user = getNearestAncestorOfTypeOrThrow(req, User.class);
@@ -773,7 +986,7 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
                     userSeedProperty.renewSeed();
                 }
 
-                return otpSecret.fromPlainPassword(Util.fixNull(pwd));
+                return otpSecret.fromPlainOtpSecret(Util.fixNull(pwd));
             }
 
             public static @Nonnull <T> T getNearestAncestorOfTypeOrThrow(@Nonnull StaplerRequest request, @Nonnull Class<T> clazz) {
