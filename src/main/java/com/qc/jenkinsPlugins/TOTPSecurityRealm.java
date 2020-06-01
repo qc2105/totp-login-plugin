@@ -78,6 +78,7 @@ import hudson.security.AuthorizationStrategy;
 import hudson.security.Permission;
 import hudson.security.PermissionAdder;
 import hudson.security.SecurityRealm;
+import hudson.util.Secret;
 import java.io.ByteArrayOutputStream;
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
@@ -876,7 +877,8 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         private transient String password;
 
         private otpSecret(String otpSecret) {
-            this.otpSecretString = otpSecret;
+            Secret s = Secret.fromString(otpSecret);
+            this.otpSecretString = s.getEncryptedValue();
         }
        
         static otpSecret fromHashedOtpSecret(String hashed) {
@@ -891,23 +893,26 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
             // TODO
             return TEST_AUTHORITY;
         }
-
-        public String getPassword() {
-            return otpSecretString;
+        
+        public String getPassword()
+        {
+            Secret s = Secret.decrypt(this.otpSecretString);
+            return Secret.toString(s);
         }
         
         public String getSecret()
         {
-            return otpSecretString;
+            Secret s = Secret.decrypt(this.otpSecretString);
+            return Secret.toString(s);
         }
 
         public boolean isPasswordCorrect(String candidate) {
-            return PASSWORD_ENCODER.isPasswordValid(getPassword(),candidate,null);
+            return PASSWORD_ENCODER.isPasswordValid(getSecret(),candidate,null);
         }
 
         public String getProtectedPassword() {
             // put session Id in it to prevent a replay attack.
-            return Protector.protect(Stapler.getCurrentRequest().getSession().getId()+':'+getPassword());
+            return Protector.protect(Stapler.getCurrentRequest().getSession().getId()+':'+getSecret());
         }
 
         public String getUsername() {
@@ -942,8 +947,9 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
             public ConverterImpl(XStream2 xstream) { super(xstream); }
             @Override protected void callback(otpSecret d, UnmarshallingContext context) {
                 // Convert to hashed password and report to monitor if we load old data
-                if (d.password!=null && d.otpSecretString==null) {
-                    d.otpSecretString = PASSWORD_ENCODER.encodePassword(Scrambler.descramble(d.password),null);
+                if (d.password!=null && d.getSecret()==null) {
+                    Secret s = Secret.fromString(PASSWORD_ENCODER.encodePassword(Scrambler.descramble(d.password),null));
+                    d.otpSecretString = s.getEncryptedValue();
                     OldDataMonitor.report(context, "1.283");
                 }
             }
@@ -1158,12 +1164,6 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         public String getDescription() {
             return "Create/delete/modify users that can log in to this jenkins";
         }
-
-//        @NonNull
-//        @Override
-//        public Category getCategory() {
-//            return Category.SECURITY;
-//        }
     }
 
     /**
