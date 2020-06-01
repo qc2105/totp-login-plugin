@@ -23,7 +23,6 @@
  */
 package com.qc.jenkinsPlugins;
 
-import com.eatthepath.otp.TimeBasedOneTimePasswordGenerator;
 import com.thoughtworks.xstream.converters.UnmarshallingContext;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Extension;
@@ -93,21 +92,18 @@ import javax.servlet.http.HttpSession;
 import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
 import java.io.IOException;
 import java.lang.reflect.Constructor;
-import java.security.Key;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.annotation.Nonnull;
-import javax.crypto.KeyGenerator;
 
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 
 import net.glxn.qrgen.QRCode;
 import net.glxn.qrgen.image.ImageType;
@@ -953,11 +949,11 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
             }
         }
 
-        @Extension @Symbol("password")
+        @Extension @Symbol("otpSecret")
         public static final class DescriptorImpl extends UserPropertyDescriptor {
             @Override
             public String getDisplayName() {
-                return "password";
+                return "otpSecret";
             }
 
             @Override
@@ -966,18 +962,6 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
                     // Should never happen, see newInstance() Javadoc
                     throw new FormException("Stapler request is missing in the call", "staplerRequest");
                 }
-                String pwd = Util.fixEmpty(req.getParameter("user.password"));
-                String pwd2= Util.fixEmpty(req.getParameter("user.password2"));
-
-                if(!Util.fixNull(pwd).equals(Util.fixNull(pwd2)))
-                    throw new FormException("Please confirm the password by typing it twice","user.password2");
-
-                String data = Protector.unprotect(pwd);
-                if(data!=null) {
-                    String prefix = Stapler.getCurrentRequest().getSession().getId() + ':';
-                    if(data.startsWith(prefix))
-                        return otpSecret.fromHashedOtpSecret(data.substring(prefix.length()));
-                }
 
                 User user = getNearestAncestorOfTypeOrThrow(req, User.class);
                 // the UserSeedProperty is not touched by the configure page
@@ -985,8 +969,9 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
                 if (userSeedProperty != null) {
                     userSeedProperty.renewSeed();
                 }
-
-                return otpSecret.fromPlainOtpSecret(Util.fixNull(pwd));
+                
+                String secret = user.getProperty(otpSecret.class).getSecret();
+                return otpSecret.fromHashedOtpSecret(secret);
             }
 
             public static @Nonnull <T> T getNearestAncestorOfTypeOrThrow(@Nonnull StaplerRequest request, @Nonnull Class<T> clazz) {
