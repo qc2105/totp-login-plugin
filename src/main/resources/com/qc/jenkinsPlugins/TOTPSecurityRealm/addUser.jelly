@@ -26,6 +26,6 @@ THE SOFTWARE.
   Page for admin to create a new user
 -->
 <?jelly escape-by-default='true'?>
-<j:jelly xmlns:j="jelly:core" xmlns:local="/hudson/security/HudsonPrivateSecurityRealm">
-  <local:_entryFormPage host="${it}" title="${%Create User}" action="createAccountByAdmin" captcha="${false}" data="${data}" />
+<j:jelly xmlns:j="jelly:core" xmlns:local="/com/qc/jenkinsPlugins/TOTPSecurityRealm">
+  <local:_entryFormPage_1 host="${it}" title="${%Create User}" action="createAccountByAdmin" captcha="${false}" data="${data}" />
 </j:jelly>
