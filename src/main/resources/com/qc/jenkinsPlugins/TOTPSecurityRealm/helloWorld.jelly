@@ -56,8 +56,7 @@ THE SOFTWARE.
     <l:main-panel>
       <h1>${%Success}</h1>
       <img th:src= "${it.currentOTPSecret}" />
-      currentPassword is ${it.currentOTPPassword}
-      My otpSecret is ${it.currentOTPSecret}
+      ${it.clearOTPSecret()}
     </l:main-panel>
   </l:layout>
 </j:jelly>

@@ -787,6 +787,12 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
         SecurityListener.fireUserCreated(user.getId());
         return user;
     }
+    
+    public void clearOTPSecret()
+    {
+        currentOTPPassword = "";
+        currentOTPSecret = "";
+    }
 
     /**
      * Creates a new user account by registering a JBCrypt Hashed password with the user.

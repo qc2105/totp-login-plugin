@@ -87,9 +87,7 @@ THE SOFTWARE.
                       });
                 </script>
                 <j:if test="${it.allowsSignup()}">
-                  <div class="signupTag">
-                    ${%signUp}
-                  </div>
+                  <a href="${rootURL}/signup"><b>${%sign up}</b></a>
                 </j:if>
                 <j:if test="${error}">
                   <div class="alert alert-danger">
