@@ -12,7 +12,7 @@
   </parent>
   <groupId>com.qc</groupId>
   <artifactId>totp-login-plugin</artifactId>
-  <version>1.19</version>
+  <version>1.22</version>
   <packaging>hpi</packaging>
 
   <name>totp-login-plugin</name>
@@ -40,7 +40,7 @@
     <url>http://github.com/jenkinsci/${project.artifactId}-plugin</url>
   </scm>
    -->
-  <repositories>
+    <repositories>
     <repository>
       <id>repo.jenkins-ci.org</id>
       <url>http://repo.jenkins-ci.org/public/</url>
@@ -65,28 +65,39 @@
         <dependency>
             <groupId>org.jenkins-ci.main</groupId>
             <artifactId>jenkins-core</artifactId>
-            <version>2.180</version>
+            <version>2.190</version>
         </dependency>
-        
-        <dependency>
-            <groupId>com.google.http-client</groupId>
-            <artifactId>google-http-client</artifactId>
-            <version>1.20.0</version>
-            <type>jar</type>
-        </dependency>
-        
-        <dependency>
-            <groupId>com.eatthepath</groupId>
-            <artifactId>java-otp</artifactId>
-            <version>0.2.0</version>
-        </dependency>
-        
         <dependency>
             <groupId>net.glxn</groupId>
             <artifactId>qrgen</artifactId>
             <version>1.4</version>
         </dependency>
-        
+        <!-- https://mvnrepository.com/artifact/org.kohsuke/access-modifier-annotation -->
+        <dependency>
+            <groupId>org.kohsuke</groupId>
+            <artifactId>access-modifier-annotation</artifactId>
+            <version>1.16</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- https://mvnrepository.com/artifact/org.slf4j/log4j-over-slf4j -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>log4j-over-slf4j</artifactId>
+            <version>1.7.26</version>
+        </dependency>
+        <!-- https://mvnrepository.com/artifact/org.slf4j/slf4j-api -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.26</version>
+        </dependency>
+        <!-- https://mvnrepository.com/artifact/org.slf4j/jcl-over-slf4j -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>jcl-over-slf4j</artifactId>
+            <version>1.7.26</version>
+        </dependency>
+
     </dependencies>
     <properties>
     <java.level>8</java.level>

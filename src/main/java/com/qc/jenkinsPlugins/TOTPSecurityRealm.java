@@ -74,12 +74,14 @@ import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.dao.DataAccessException;
 
 import edu.umd.cs.findbugs.annotations.NonNull;
+import groovy.lang.Binding;
 import hudson.security.ACL;
 import hudson.security.AuthorizationStrategy;
 import hudson.security.Permission;
 import hudson.security.PermissionAdder;
 import hudson.security.SecurityRealm;
 import hudson.util.Secret;
+import hudson.util.spring.BeanBuilder;
 import java.io.ByteArrayOutputStream;
 import javax.servlet.Filter;
 import javax.servlet.FilterChain;
@@ -93,6 +95,7 @@ import javax.servlet.http.HttpSession;
 
 import static javax.servlet.http.HttpServletResponse.SC_UNAUTHORIZED;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.security.SecureRandom;
 import java.util.*;
@@ -109,6 +112,7 @@ import java.nio.charset.StandardCharsets;
 
 import net.glxn.qrgen.QRCode;
 import net.glxn.qrgen.image.ImageType;
+import org.springframework.web.context.WebApplicationContext;
 
 /**
  * {@link SecurityRealm} that performs authentication by looking up {@link User}.
@@ -163,6 +167,44 @@ public class TOTPSecurityRealm extends AbstractPasswordBasedSecurityRealm implem
                 throw new AssertionError(e); // never happen because our Filter.init is no-op
             }
         }
+    }
+    
+    /**
+     * Creates {@link Filter} that all the incoming HTTP requests will go through
+     * for authentication.
+     *
+     * <p>
+     * The default implementation uses {@link #getSecurityComponents()} and builds
+     * a standard filter chain from /WEB-INF/security/SecurityFilters.groovy.
+     * But subclasses can override this to completely change the filter sequence.
+     *
+     * <p>
+     * For other plugins that want to contribute {@link Filter}, see
+     * {@link PluginServletFilter}.
+     *
+     * @since 1.271
+     */
+    @Override
+    public Filter createFilter(FilterConfig filterConfig) {
+        LOGGER.entering(SecurityRealm.class.getName(), "createFilter");
+        
+        Binding binding = new Binding();
+        SecurityComponents sc = getSecurityComponents();
+        binding.setVariable("securityComponents", sc);
+        binding.setVariable("securityRealm",this);
+        BeanBuilder builder = new BeanBuilder();
+        String groovyFileURL = "/SecurityFilters.groovy";
+        try {
+            InputStream input = this.getClass().getResourceAsStream(groovyFileURL);
+            builder.parse(input,binding);
+        }
+        catch (IllegalArgumentException e)
+        {
+            LOGGER.finer(groovyFileURL);
+            throw new IllegalArgumentException(groovyFileURL);
+        }
+        WebApplicationContext context = builder.createApplicationContext();
+        return (Filter) context.getBean("filter");
     }
 
     @Override
