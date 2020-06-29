@@ -26,5 +26,5 @@ THE SOFTWARE.
 <?jelly escape-by-default='true'?>
 <!-- TODO add taglibs such as: xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:i="jelly:fmt" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" -->
 <j:jelly xmlns:j="jelly:core" xmlns:local="/com/qc/jenkinsPlugins/TOTPSecurityRealm">
-  <local:_entryFormPage_1 host="${it}" title="${%Verify User}" action="verifyAccount" captcha="${false}" data="${data}" />
+  <local:_entryFormPage_verify host="${it}" title="${%Verify User}" action="verifyAccount" captcha="${false}" data="${data}" />
 </j:jelly>
