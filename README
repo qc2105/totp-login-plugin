@@ -1,0 +1,5 @@
+Yet another Jenkins Security Realm plugin
+
+It implements time based one time password authentication, thus the name totp-login-plugin.
+Once you've created the user account, you will see a QR code, scan it with Microsoft Authenticator or with FreeOTP.
+If you like, you can reach me at qc2105@qq.com
